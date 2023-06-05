@@ -153,6 +153,36 @@ class Joint_Tx_Rx_Analog_Beamformer(Module):
         with torch.no_grad():
             Rx_codebook = self.compute_Rx_codebook().clone().detach().numpy()
             return Rx_codebook
+        
+class Tx_Analog_Beamformer(nn.Module):
+    def __init__(self, num_antenna_Tx, num_beam):
+        super(Tx_Analog_Beamformer, self).__init__()
+        self.num_antenna_Tx = num_antenna_Tx
+        self.num_beam = num_beam
+        self.Tx_codebook_real = Parameter(torch.Tensor(self.num_antenna_Tx, self.num_beam))
+        self.Tx_codebook_imag = Parameter(torch.Tensor(self.num_antenna_Tx, self.num_beam))
+        self.register_buffer('scale_Tx',torch.sqrt(torch.tensor([num_antenna_Tx]).float()))
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        init.kaiming_uniform_(self.Tx_codebook_real, a=math.sqrt(5))
+        init.kaiming_uniform_(self.Tx_codebook_imag, a=math.sqrt(5))
+    
+    def forward(self,h):
+        # h: n_batch  x 1 x num_antenna_Tx
+        Tx_codebook = self.compute_Tx_codebook() # num_antenna_Tx x num_beam_Tx
+        y = torch.matmul(h,Tx_codebook) # n_batch x num_antenna_Tx x num_beam_Tx       
+        return y
+    
+    def compute_Tx_codebook(self) -> Tensor:
+        Tx_codebook = torch.complex(self.Tx_codebook_real,self.Tx_codebook_imag)
+        Tx_codebook_normalized = torch.div(Tx_codebook,torch.abs(Tx_codebook))/self.scale_Tx
+        return Tx_codebook_normalized
+        
+    def get_Tx_codebook(self) -> np.ndarray:
+        with torch.no_grad():
+            Tx_codebook = self.compute_Tx_codebook().clone().detach().numpy()
+            return Tx_codebook
     
 class Beam_Predictor_MLP(nn.Module):
     def __init__(self, num_antenna: int):    
@@ -195,6 +225,31 @@ class Beam_Predictor_CNN(nn.Module):
         v = torch.complex(v_real,v_imag)
         v = torch.div(v,torch.abs(v))/self.scale
         return v   
+    
+class Tx_BF_Autoencoder(nn.Module):
+    def __init__(self, num_antenna_Tx, num_probing_beam, noise_power = 0.0, norm_factor = 1.0):
+        super(Tx_BF_Autoencoder, self).__init__()        
+        self.num_antenna_Tx = num_antenna_Tx
+        self.num_probing_beam = num_probing_beam
+        self.register_buffer('norm_factor',torch.tensor([norm_factor]).float())
+        self.register_buffer('noise_power',torch.tensor([noise_power]).float())
+        self.beamformer = Tx_Analog_Beamformer(num_antenna_Tx=self.num_antenna_Tx, num_beam=self.num_probing_beam)
+        self.beam_predictor = Beam_Predictor_MLP(num_antenna = self.num_antenna_Tx)
+        
+    def forward(self, h):
+        # h: n_batch  x 1 x num_antenna
+        bf_signal = self.beamformer(h).squeeze(dim=1) # n_batch x 1 x num_beam -> n_batch x num_beam
+        noise_real = torch.normal(0,1, size=bf_signal.size()).to(h.device)*torch.sqrt(self.noise_power/2)/self.norm_factor
+        noise_imag = torch.normal(0,1, size=bf_signal.size()).to(h.device)*torch.sqrt(self.noise_power/2)/self.norm_factor
+        noise = torch.complex(noise_real, noise_imag)
+        bf_signal_w_noise = bf_signal + noise
+        bf_signal_power = torch.pow(torch.abs(bf_signal_w_noise),2)
+        out = self.beam_predictor(bf_signal_power)  
+        return out, bf_signal
+    
+    def get_Tx_codebook(self) -> np.ndarray:
+        return self.beamformer.get_Tx_codebook()
+    
     
 class Joint_BF_Autoencoder(nn.Module):
     def __init__(self, num_antenna_Tx: int, num_antenna_Rx: int, num_probing_beam_Tx: int, num_probing_beam_Rx: int, 

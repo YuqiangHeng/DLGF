@@ -43,7 +43,7 @@ parser.add_argument('--feedback_mode',type=str,default='diagonal')
 parser.add_argument('--beam_synthesizer',type=str,default='MLP')
 parser.add_argument('--learned_probing',type=str,default='TxRx')
 parser.add_argument('--BW',type=float,default=50,help='MHz')
-parser.add_argument('--noise_PSD_dB',type=float,default=-143,help='dBm/Hz')
+parser.add_argument('--noise_PSD_dB',type=float,default=-161,help='dBm/Hz')
 parser.add_argument('--loss_fn',type=str,default='BF_IA_loss',help='BF_IA_loss, SPE_loss, BF_loss')
 
 args = parser.parse_args()

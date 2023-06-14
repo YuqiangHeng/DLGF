@@ -7,7 +7,7 @@ import torch.optim as optim
 import torch.nn as nn
 from sklearn.model_selection import train_test_split
 from beam_utils import ULA_DFT_codebook,UPA_DFT_codebook
-from DL_utils_MISO import BF_Autoencoder,BF_gain_loss,spectral_efficiency_loss,fit_GF,fit_CB
+from DL_utils_MISO import BF_Autoencoder,BF_DFT_Autoencoder,BF_gain_loss,spectral_efficiency_loss,fit_GF,fit_CB
 
 import torch
 from torch import Tensor
@@ -29,7 +29,7 @@ parser.add_argument('--batch_size', type=int, default=800)
 parser.add_argument('--gpu',type=int,default=0)
 parser.add_argument('--scenario',type=str,default='Boston5G_28')
 parser.add_argument('--activated_BS',type=int,default=2)
-parser.add_argument('--h_NMSE_dB',type=int,default=-np.inf)
+parser.add_argument('--h_NMSE_dB',type=int,default=-20)
 parser.add_argument('--dataset_split_seed',type=int,default=7)
 parser.add_argument('--IA_threshold',type=int,default=-5)
 parser.add_argument('--use_specific_Tx_power', dest='use_default_Tx_power', default=True, action='store_false')
@@ -37,7 +37,7 @@ parser.add_argument('--array_type',type=str,default='ULA')
 parser.add_argument('--probing_codebook',type=str,default='learned')
 parser.add_argument('--BW',type=float,default=50,help='MHz')
 parser.add_argument('--noise_PSD_dB',type=float,default=-161,help='dBm/Hz')
-parser.add_argument('--loss_fn',type=str,default='None',help='SPE_loss, BF_loss')
+parser.add_argument('--loss_fn',type=str,default='BF_loss',help='SPE_loss, BF_loss')
 parser.add_argument('--mode',type=str,default='GF',help='GF, CB')
 parser.add_argument('--oversample_factor',type=float,default=2)
 
@@ -73,6 +73,7 @@ nepoch = args.nepoch
 batch_size = args.batch_size  
 IA_threshold = args.IA_threshold
 measurement_noise_power = 10**((noise_power_dBm-tx_power_dBm)/10)/measurement_gain
+h_NMSE = 10**(args.h_NMSE_dB/10)
 
 gpu_name = "cuda:{}".format(args.gpu)
 device = torch.device(gpu_name if torch.cuda.is_available() else 'cpu')
@@ -116,7 +117,7 @@ if args.array_type == 'UPA':
     num_antenna_az = BS_array_shape[1]
     num_antenna_el = BS_array_shape[2]
 elif args.array_type == 'ULA':
-    BS_array_shape = np.array([1, 64, 1])
+    BS_array_shape = np.array([64, 1, 1])
     parameters['bs_antenna']['shape'] = BS_array_shape
 else:
     raise Exception("Unsupported Antenna Array Type!")
@@ -184,6 +185,12 @@ val_idc, test_idc = train_test_split(test_idc,test_size=0.5,random_state=args.da
 
 x_train,x_val,x_test = h_scaled[train_idc],h_scaled[val_idc],h_scaled[test_idc]
 
+np.random.seed(args.dataset_split_seed)
+for i,h in enumerate(x_train):
+    h_noise_scale = np.sqrt(abs(h)**2*h_NMSE/2)
+    h_train_noise = (np.random.normal(size=h.shape)+1j*np.random.normal(size=h.shape))*h_noise_scale
+    x_train[i] = h+h_train_noise
+
 torch_x_train = torch.from_numpy(x_train).to(device)
 torch_x_val = torch.from_numpy(x_val).to(device)
 torch_x_test = torch.from_numpy(x_test).to(device)
@@ -226,18 +233,30 @@ train_loader = torch.utils.data.DataLoader(train, batch_size = batch_size, shuff
 val_loader = torch.utils.data.DataLoader(val, batch_size = batch_size, shuffle = False)
 test_loader = torch.utils.data.DataLoader(test, batch_size = batch_size, shuffle = False)
 
-for n_probing_beam in [4,8,12,16,20,24,28,32,48]:
-# for n_probing_beam in [32]:
-    print('num probing beams = {}.'.format(n_probing_beam))
-
-    autoencoder = BF_Autoencoder(num_antenna =num_antenna,num_probing_beam = n_probing_beam,
-                                noise_power=measurement_noise_power, norm_factor = norm_factor,
-                                mode = args.mode, num_beam = num_beams).to(device)
-    model_setup_params = ("MISO_{}_BS_{}_{}_"+
-                    "{}_{}_Nprobe_{}_"+
-                    "{}_antenna").format(parameters['scenario'],parameters['active_BS'][0],args.array_type,
-                                            args.mode,args.loss_fn,
-                                            n_probing_beam,num_antenna)
+# for n_probing_beam in [2,4,8,12]:
+# for n_probing_beam in [16,20,24]:
+# for n_probing_beam in [28,32,48,64]:
+# for n_probing_beam in [2,4,8,12,16,20,24,28,32,48]:
+for n_probing_beam in [128]:
+    print('num {} probing beams = {}.'.format(args.probing_codebook,n_probing_beam))
+    if args.probing_codebook == 'learned':
+        autoencoder = BF_Autoencoder(num_antenna =num_antenna,num_probing_beam = n_probing_beam,
+                                    noise_power=measurement_noise_power, norm_factor = norm_factor,
+                                    mode = args.mode, num_beam = num_beams).to(device)
+        model_setup_params = ("MISO_{}_BS_{}_{}_"+
+                        "{}_{}_Nprobe_{}_"+
+                        "{}_antenna").format(parameters['scenario'],parameters['active_BS'][0],args.array_type,
+                                                args.mode,args.loss_fn,
+                                                n_probing_beam,num_antenna)
+    else:
+        autoencoder = BF_DFT_Autoencoder(num_antenna =num_antenna,num_probing_beam = n_probing_beam,
+                                    noise_power=measurement_noise_power, norm_factor = norm_factor,
+                                    mode = args.mode, num_beam = num_beams).to(device)
+        model_setup_params = ("DFT_MISO_{}_BS_{}_{}_"+
+                        "{}_{}_Nprobe_{}_"+
+                        "{}_antenna").format(parameters['scenario'],parameters['active_BS'][0],args.array_type,
+                                                args.mode,args.loss_fn,
+                                                n_probing_beam,num_antenna)        
     model_savefname = model_savefname_prefix+model_setup_params+".pt"
     autoencoder_opt = optim.Adam(autoencoder.parameters(),lr=0.0001, betas=(0.9,0.999), amsgrad=True)
 

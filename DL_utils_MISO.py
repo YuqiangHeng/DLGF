@@ -7,7 +7,7 @@ import math
 import torch.utils.data
 import torch.optim as optim
 import torch.nn as nn
-from beam_utils import UPA_DFT_codebook, unravel_index
+from beam_utils import UPA_DFT_codebook, unravel_index, ULA_DFT_codebook
 import torch
 from torch import Tensor
 from torch.nn.parameter import Parameter
@@ -80,6 +80,34 @@ class BF_Autoencoder(nn.Module):
     def get_codebook(self) -> np.ndarray:
         return self.beamformer.get_codebook()
     
+class BF_DFT_Autoencoder(nn.Module):
+    def __init__(self, num_antenna, num_probing_beam, noise_power = 0.0, norm_factor = 1.0, mode = 'GF', num_beam = None):
+        super(BF_DFT_Autoencoder, self).__init__()        
+        self.num_antenna = num_antenna
+        self.num_probing_beam = num_probing_beam
+        self.register_buffer('norm_factor',torch.tensor([norm_factor]).float())
+        self.register_buffer('noise_power',torch.tensor([noise_power]).float())
+        self.mode = mode
+        self.num_beam = num_beam
+        self.register_buffer('probing_codebook',torch.from_numpy(ULA_DFT_codebook(nseg=self.num_probing_beam,n_antenna=self.num_antenna,spacing=0.5).T).to(torch.cfloat))
+        if self.mode == 'GF':
+            self.beam_predictor = Beam_Synthesizer(num_antenna = self.num_antenna)
+        else:
+            if self.num_beam is None:
+               self.num_beam = self.num_antenna
+            self.beam_predictor = Beam_Classifier(num_antenna = self.num_antenna, num_beam = self.num_beam) 
+        
+    def forward(self, h):
+        # h: n_batch  x 1 x num_antenna
+        bf_signal =  torch.matmul(h,self.probing_codebook).squeeze(dim=1) # n_batch x 1 x num_beam -> n_batch x num_beam
+        noise_real = torch.normal(0,1, size=bf_signal.size()).to(h.device)*torch.sqrt(self.noise_power/2)/self.norm_factor
+        noise_imag = torch.normal(0,1, size=bf_signal.size()).to(h.device)*torch.sqrt(self.noise_power/2)/self.norm_factor
+        noise = torch.complex(noise_real, noise_imag)
+        bf_signal_w_noise = bf_signal + noise
+        bf_signal_power = torch.pow(torch.abs(bf_signal_w_noise),2)
+        out = self.beam_predictor(bf_signal_power)   
+        return out
+    
 class Beam_Synthesizer(nn.Module):
     def __init__(self, num_antenna: int):    
         super(Beam_Synthesizer, self).__init__()
@@ -149,7 +177,7 @@ def fit_GF(model, train_loader, val_loader, opt, loss_fn, EPOCHS, model_savefnam
     for epoch in range(EPOCHS):
         model.train()
         train_loss = 0
-        for batch_idx, [var_X_batch] in enumerate(train_loader):
+        for batch_idx, [var_X_batch] in enumerate(train_loader):         
             optimizer.zero_grad()
             output = model(var_X_batch)
             loss = loss_fn(var_X_batch, output)

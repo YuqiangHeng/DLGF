@@ -7,7 +7,7 @@ import torch.optim as optim
 import torch.nn as nn
 from sklearn.model_selection import train_test_split
 from beam_utils import ULA_DFT_codebook,UPA_DFT_codebook
-from DL_utils_MISO import BF_Autoencoder,BF_DFT_Autoencoder,BF_gain_loss,spectral_efficiency_loss,fit_GF,fit_CB
+from DL_utils_MISO import BF_Autoencoder,BF_DFT_Autoencoder,DirectBF_CB,BF_gain_loss,spectral_efficiency_loss,fit_GF,fit_CB
 
 import torch
 from torch import Tensor
@@ -34,12 +34,12 @@ parser.add_argument('--dataset_split_seed',type=int,default=7)
 parser.add_argument('--IA_threshold',type=int,default=-5)
 parser.add_argument('--use_specific_Tx_power', dest='use_default_Tx_power', default=True, action='store_false')
 parser.add_argument('--array_type',type=str,default='ULA')
-parser.add_argument('--probing_codebook',type=str,default='learned')
+parser.add_argument('--probing_codebook',type=str,default='learned',help='learned, DFT')
 parser.add_argument('--BW',type=float,default=50,help='MHz')
 parser.add_argument('--noise_PSD_dB',type=float,default=-161,help='dBm/Hz')
-parser.add_argument('--loss_fn',type=str,default='BF_loss',help='SPE_loss, BF_loss')
-parser.add_argument('--mode',type=str,default='GF',help='GF, CB')
-parser.add_argument('--oversample_factor',type=float,default=2)
+parser.add_argument('--loss_fn',type=str,default='BF_loss',help='SPE_loss, BF_loss, CE, BCE')
+parser.add_argument('--mode',type=str,default='GF',help='GF, CB, Li19_CB')
+parser.add_argument('--oversample_factor',type=float,default=4)
 
 args = parser.parse_args()
 
@@ -186,16 +186,16 @@ val_idc, test_idc = train_test_split(test_idc,test_size=0.5,random_state=args.da
 x_train,x_val,x_test = h_scaled[train_idc],h_scaled[val_idc],h_scaled[test_idc]
 
 np.random.seed(args.dataset_split_seed)
-for i,h in enumerate(x_train):
-    h_noise_scale = np.sqrt(abs(h)**2*h_NMSE/2)
-    h_train_noise = (np.random.normal(size=h.shape)+1j*np.random.normal(size=h.shape))*h_noise_scale
-    x_train[i] = h+h_train_noise
+for i,h_iter in enumerate(x_train):
+    h_noise_scale = np.sqrt(abs(h_iter)**2*h_NMSE/2)
+    h_train_noise = (np.random.normal(size=h_iter.shape)+1j*np.random.normal(size=h_iter.shape))*h_noise_scale
+    x_train[i] = h_iter+h_train_noise
 
 torch_x_train = torch.from_numpy(x_train).to(device)
 torch_x_val = torch.from_numpy(x_val).to(device)
 torch_x_test = torch.from_numpy(x_test).to(device)
 num_beams  = None
-if args.mode == 'CB':
+if args.mode in ['CB','Li19_CB']:
     if args.array_type == 'UPA':
         num_beams = int(num_antenna_az*args.oversample_factor)*int(num_antenna_el*args.oversample_factor)
         DFT_codebook = UPA_DFT_codebook(n_azimuth=int(num_antenna_az*args.oversample_factor),
@@ -215,7 +215,11 @@ if args.mode == 'CB':
     else:
         dft_bf_gain = abs(h @ DFT_codebook).squeeze()**2
         DFT_beam_target = np.argmax(dft_bf_gain,1) 
-        np.save(DFT_beam_target_path,DFT_beam_target,allow_pickle=True)    
+        np.save(DFT_beam_target_path,DFT_beam_target,allow_pickle=True)   
+    if args.mode == 'Li19_CB' and args.loss_fn == 'BCE':
+        DFT_beam_target_onehot = np.zeros((DFT_beam_target.shape[0],num_beams),dtype=np.float32)
+        DFT_beam_target_onehot[np.arange(DFT_beam_target.shape[0]),DFT_beam_target] = 1
+        DFT_beam_target = DFT_beam_target_onehot
     torch_y_train = torch.from_numpy(DFT_beam_target[train_idc]).to(device)
     torch_y_val = torch.from_numpy(DFT_beam_target[val_idc]).to(device)
     torch_y_test = torch.from_numpy(DFT_beam_target[test_idc]).to(device)
@@ -233,32 +237,38 @@ train_loader = torch.utils.data.DataLoader(train, batch_size = batch_size, shuff
 val_loader = torch.utils.data.DataLoader(val, batch_size = batch_size, shuffle = False)
 test_loader = torch.utils.data.DataLoader(test, batch_size = batch_size, shuffle = False)
 
-# for n_probing_beam in [2,4,8,12]:
-# for n_probing_beam in [16,20,24]:
-# for n_probing_beam in [28,32,48,64]:
+# for n_probing_beam in [2,4,8]:
+# for n_probing_beam in [12,16,20]:
+# for n_probing_beam in [24,28,32]:
+for n_probing_beam in [36,48,64]:
 # for n_probing_beam in [2,4,8,12,16,20,24,28,32,48]:
-for n_probing_beam in [128]:
+# for n_probing_beam in [60]:
     print('num {} probing beams = {}.'.format(args.probing_codebook,n_probing_beam))
+    if args.mode == 'GF':
+        mode_savename = args.mode
+    else:
+        mode_savename = args.mode+'_'+str(num_beams)
     if args.probing_codebook == 'learned':
         autoencoder = BF_Autoencoder(num_antenna =num_antenna,num_probing_beam = n_probing_beam,
                                     noise_power=measurement_noise_power, norm_factor = norm_factor,
                                     mode = args.mode, num_beam = num_beams).to(device)
-        model_setup_params = ("MISO_{}_BS_{}_{}_"+
-                        "{}_{}_Nprobe_{}_"+
-                        "{}_antenna").format(parameters['scenario'],parameters['active_BS'][0],args.array_type,
-                                                args.mode,args.loss_fn,
-                                                n_probing_beam,num_antenna)
     else:
         autoencoder = BF_DFT_Autoencoder(num_antenna =num_antenna,num_probing_beam = n_probing_beam,
                                     noise_power=measurement_noise_power, norm_factor = norm_factor,
                                     mode = args.mode, num_beam = num_beams).to(device)
-        model_setup_params = ("DFT_MISO_{}_BS_{}_{}_"+
-                        "{}_{}_Nprobe_{}_"+
-                        "{}_antenna").format(parameters['scenario'],parameters['active_BS'][0],args.array_type,
-                                                args.mode,args.loss_fn,
-                                                n_probing_beam,num_antenna)        
+    if args.mode == 'Li19_CB':
+        # autoencoder = DirectBF_CB(n_antenna =num_antenna,n_wide_beam = n_probing_beam, n_narrow_beam = num_beams,
+        #                             noise_power=measurement_noise_power, norm_factor = norm_factor).to(device)
+        autoencoder = DirectBF_CB(num_antenna =num_antenna,num_probing_beam = n_probing_beam,
+                                    noise_power=measurement_noise_power, norm_factor = norm_factor,
+                                    loss_fn = args.loss_fn, num_beam = num_beams).to(device)        
+    model_setup_params = ("MISO_{}_BS_{}_{}_"+
+                    "{}_{}_{}_Nprobe_{}_"+
+                    "{}_antenna").format(parameters['scenario'],parameters['active_BS'][0],args.array_type,
+                                            mode_savename,args.probing_codebook,args.loss_fn,
+                                            n_probing_beam,num_antenna)        
     model_savefname = model_savefname_prefix+model_setup_params+".pt"
-    autoencoder_opt = optim.Adam(autoencoder.parameters(),lr=0.0001, betas=(0.9,0.999), amsgrad=True)
+    autoencoder_opt = optim.Adam(autoencoder.parameters(),lr=0.001, betas=(0.9,0.999), amsgrad=True)
 
     if args.mode == 'GF':   
         if args.loss_fn == 'SPE_loss':
@@ -266,10 +276,19 @@ for n_probing_beam in [128]:
             train_loss_hist, val_loss_hist = fit_GF(autoencoder, train_loader, val_loader, autoencoder_opt, loss_fn, nepoch, train_hist_savefname_prefix+model_setup_params)  
         elif args.loss_fn == 'BF_loss':
             train_loss_hist, val_loss_hist = fit_GF(autoencoder, train_loader, val_loader, autoencoder_opt, BF_gain_loss, nepoch, train_hist_savefname_prefix+model_setup_params)   
+    elif args.mode == 'Li19_CB':
+        if args.loss_fn == 'CE':
+            train_loss_hist, train_acc_hist, val_loss_hist, val_acc_hist = fit_CB(autoencoder, train_loader, val_loader, 
+                                                                                autoencoder_opt, nn.CrossEntropyLoss(), nepoch, 
+                                                                                train_hist_savefname_prefix+model_setup_params,loss_fn_name=args.loss_fn) 
+        else:
+            train_loss_hist, train_acc_hist, val_loss_hist, val_acc_hist = fit_CB(autoencoder, train_loader, val_loader, 
+                                                                                autoencoder_opt, nn.BCELoss(), nepoch, 
+                                                                                train_hist_savefname_prefix+model_setup_params,loss_fn_name=args.loss_fn)                    
     else:
         train_loss_hist, train_acc_hist, val_loss_hist, val_acc_hist = fit_CB(autoencoder, train_loader, val_loader, 
                                                                             autoencoder_opt, nn.CrossEntropyLoss(), nepoch, 
-                                                                            train_hist_savefname_prefix+model_setup_params)
+                                                                            train_hist_savefname_prefix+model_setup_params,loss_fn_name='CE')
     autoencoder = autoencoder.cpu()
     torch.save(autoencoder.state_dict(),model_savefname)
 

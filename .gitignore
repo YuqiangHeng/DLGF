@@ -1,0 +1,5 @@
+*.pkl
+*.npy
+Figures/
+Saved_Models/
+Train_Hist/

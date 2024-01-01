@@ -12,7 +12,7 @@
 ### 4. Compile and plot results: use the compile_results.ipynb notebook to compile and plot the results, use the visualize_leanred_beams.ipynb notebook to plot the learned probing/sensing beams as well as the predicted beams.
 
 ## Model Training
-### 1. Train GF or CB models: run the DLGF_train.py/DLCB_train.py file to train models. The following parameters can be adjusted in the argument:
+### Train GF or CB models: run the DLGF_train.py/DLCB_train.py file to train models. The following parameters can be adjusted in the argument:
 - **scenario**: DeepMIMO Ray-tracing scenario: O1_28, I3_60, O1_28B, Boston_5G, etc.
 - **activated_BS**: index of the activated BS in the DeepMIMO scenario 
 - **num_probing_beam**: number of probing beams 

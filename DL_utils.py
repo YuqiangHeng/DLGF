@@ -352,7 +352,7 @@ class spectral_efficiency_loss(nn.Module):
         rate = torch.log2(1+snr)
         return -rate.mean()
     
-def fit_SPE(model, train_loader, val_loader, opt, loss_fn, EPOCHS, model_savefname, device=torch.device('cpu')):
+def fit_alt(model, train_loader, val_loader, opt, loss_fn, EPOCHS, model_savefname, loss = 'SPE_loss', device=torch.device('cpu')):
     optimizer = opt
     train_combined_loss_hist,val_combined_loss_hist = [],[]
     
@@ -383,8 +383,10 @@ def fit_SPE(model, train_loader, val_loader, opt, loss_fn, EPOCHS, model_savefna
                 val_combined_loss += combined_loss.cpu().detach().item()*X_batch.shape[0]    
             val_combined_loss /= len(val_loader.dataset)
             val_combined_loss_hist.append(val_combined_loss)
-
-            print(('Epoch : {}, SPE (bps/Hz): Training = {:.2f}, Validation = {:.2f}.').format(epoch,train_combined_loss,val_combined_loss))
+            if loss == 'SPE_loss':
+                print(('Epoch : {}, SPE (bps/Hz): Training = {:.2f}, Validation = {:.2f}.').format(epoch,train_combined_loss,val_combined_loss))
+            else:
+                print(('Epoch : {}, BF loss: Training = {:.2f}, Validation = {:.2f}.').format(epoch,train_combined_loss,val_combined_loss))
             torch.save(model.state_dict(),model_savefname+"_epoch_{}.pt".format(epoch))
         combined_loss_hist = (train_combined_loss_hist, val_combined_loss_hist)
     return combined_loss_hist

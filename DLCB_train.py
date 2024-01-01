@@ -35,8 +35,8 @@ parser.add_argument('--array_type',type=str,default='UPA', help='BS and UE array
 parser.add_argument('--feedback_mode',type=str,default='diagonal', help='feedback mode for the probing measurements, consider measurements of all Tx/Rx beam pairs as a square matrix, feed back diagonal elements or full')
 parser.add_argument('--beam_synthesizer',type=str,default='MLP', help='beam synthesizer architecture, MLP or CNN')
 parser.add_argument('--learned_probing',type=str,default='TxRx', help='TxRx: learn Tx and Rx probing beams jointly; Tx: learn Tx probing beams only; Rx: learn Rx probing beams only')
-parser.add_argument('--BW',type=float,default=50,help='MHz',help='bandwidth in MHz')
-parser.add_argument('--noise_PSD_dB',type=float,default=-143,help='dBm/Hz',help='noise PSD in dBm/Hz')
+parser.add_argument('--BW',type=float,default=50, help='bandwidth in MHz')
+parser.add_argument('--noise_PSD_dB',type=float,default=-143, help='noise PSD in dBm/Hz')
 args = parser.parse_args()
 
 model_savefname_prefix = './Saved_Models/'
@@ -149,7 +149,7 @@ print('Removed {} out of {} UEs that have no valid paths.'.format(len(valid_ue_i
 h = h[valid_ue_idc]
 
 if args.IA_threshold > -np.inf:
-    eigen_bf_gain_path = 'eigen_bf_gain_{}_BS_{}_BS_array_{}x{}x{}_UE_array_{}x{}x{}.npy'.format(parameters['scenario'],parameters['active_BS'][0],
+    eigen_bf_gain_path = './Data/eigen_bf_gain_{}_BS_{}_BS_array_{}x{}x{}_UE_array_{}x{}x{}.npy'.format(parameters['scenario'],parameters['active_BS'][0],
                                                                                             parameters['bs_antenna'][0]['shape'][0],parameters['bs_antenna'][0]['shape'][1],parameters['bs_antenna'][0]['shape'][2],
                                                                                             parameters['ue_antenna']['shape'][0],parameters['ue_antenna']['shape'][1],parameters['ue_antenna']['shape'][2])
     if exists(eigen_bf_gain_path):
@@ -176,7 +176,7 @@ h_scaled = (h.T/norm_factor).T
 DFT_codebook_TX = UPA_DFT_codebook(n_azimuth=8*2,n_elevation=8*2,n_antenna_azimuth=8,n_antenna_elevation=8,spacing=0.5).T
 DFT_codebook_RX = UPA_DFT_codebook(n_azimuth=4*2,n_elevation=4*2,n_antenna_azimuth=4,n_antenna_elevation=4,spacing=0.5).T
 
-DFT_beam_target_path = 'DFT_beam_target_{}_BS_{}_BS_array_{}x{}x{}_UE_array_{}x{}x{}.npy'.format(parameters['scenario'],parameters['active_BS'][0],
+DFT_beam_target_path = './Data/DFT_beam_target_{}_BS_{}_BS_array_{}x{}x{}_UE_array_{}x{}x{}.npy'.format(parameters['scenario'],parameters['active_BS'][0],
                                                                                         parameters['bs_antenna'][0]['shape'][0],parameters['bs_antenna'][0]['shape'][1],parameters['bs_antenna'][0]['shape'][2],
                                                                                         parameters['ue_antenna']['shape'][0],parameters['ue_antenna']['shape'][1],parameters['ue_antenna']['shape'][2])
 if  exists(DFT_beam_target_path):

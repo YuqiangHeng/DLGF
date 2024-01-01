@@ -8,7 +8,7 @@ import DeepMIMO
 import argparse
 import time
 from os.path import exists
-from DL_utils import Joint_BF_Autoencoder,combined_BF_IA_loss,spectral_efficiency_loss,BF_loss,fit,fit_SPE
+from DL_utils import Joint_BF_Autoencoder,combined_BF_IA_loss,spectral_efficiency_loss,BF_loss,fit,fit_alt
 
 torch.cuda.empty_cache()
 
@@ -32,7 +32,7 @@ parser.add_argument('--array_type',type=str,default='UPA', help='BS and UE array
 parser.add_argument('--feedback_mode',type=str,default='diagonal', help='feedback mode for the probing measurements, consider measurements of all Tx/Rx beam pairs as a square matrix, feed back diagonal elements or full')
 parser.add_argument('--beam_synthesizer',type=str,default='MLP', help='beam synthesizer architecture, MLP or CNN')
 parser.add_argument('--learned_probing',type=str,default='TxRx', help='TxRx: learn Tx and Rx probing beams jointly; Tx: learn Tx probing beams only; Rx: learn Rx probing beams only')
-parser.add_argument('--BW',type=float,default=100,help='MHz',help='bandwidth in MHz')
+parser.add_argument('--BW',type=float,default=100, help='bandwidth in MHz')
 parser.add_argument('--noise_PSD_dB',type=float,default=-143,help='noise PSD in dBm/Hz')
 parser.add_argument('--loss_fn',type=str,default='BF_IA_loss',help='loss function for training BF_IA_loss, SPE_loss, BF_loss')
 args = parser.parse_args()
@@ -235,10 +235,10 @@ if args.loss_fn == 'BF_IA_loss':
     train_hist = fit(autoencoder, train_loader, val_loader, autoencoder_opt, loss_fn, nepoch, model_savefname = train_hist_savefname_prefix+model_setup_params, h_NMSE_dB = args.h_NMSE_dB)  
 elif args.loss_fn == 'SPE_loss':
     loss_fn = spectral_efficiency_loss(scale=norm_factor,noise_power_dBm=noise_power_dBm,Tx_power_dBm=tx_power_dBm) 
-    train_hist = fit_SPE(autoencoder, train_loader, val_loader, autoencoder_opt, loss_fn, nepoch, model_savefname = train_hist_savefname_prefix+model_setup_params, device=device)  
+    train_hist = fit_alt(autoencoder, train_loader, val_loader, autoencoder_opt, loss_fn, nepoch, model_savefname = train_hist_savefname_prefix+model_setup_params, loss='SPE_loss', device=device)  
 elif args.loss_fn == 'BF_loss':
     loss_fn = BF_loss(noise_power_dBm=noise_power_dBm,Tx_power_dBm=tx_power_dBm)   
-    train_hist = fit_SPE(autoencoder, train_loader, val_loader, autoencoder_opt, loss_fn, nepoch, model_savefname = train_hist_savefname_prefix+model_setup_params, device=device)   
+    train_hist = fit_alt(autoencoder, train_loader, val_loader, autoencoder_opt, loss_fn, nepoch, model_savefname = train_hist_savefname_prefix+model_setup_params, loss='BF_loss', device=device)   
 else:
     raise Exception("Unsupported Loss Function!")
 t_end = time.time()
